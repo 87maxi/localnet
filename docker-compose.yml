@@ -1,0 +1,434 @@
+networks:
+  eth-net:
+    name: eth-net
+    driver: bridge
+
+
+services:
+
+  # =============== INICIALIZADOR (se ejecuta una vez) ===============
+
+  # Geth localnet con modo debug
+
+  geth-init:
+    build: ./dc/geth-container
+    volumes:
+      - geth-data:/root/.ethereum
+      - jwt-secret:/jwt
+      - ./dc/geth-container/jwt.hex:/app/jwt.hex
+      - prysm-genesis:/data
+    networks:
+      - eth-net
+    restart: "no"
+    entrypoint: ["/bin/bash", "/app/geth-init.sh"]  
+
+  keytool:
+    build: ./dc/keytool
+    container_name: keytool
+    depends_on:
+      geth-init:
+        condition: service_completed_successfully
+    volumes:
+      -  geth-data:/app/geth
+      - ./volumen/output:/app/output
+      - ./dc/keytool/config.yaml:/app/config.yaml
+      -  prysm-beacon-data:/data
+    command: ["/execute_convert.sh"]
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/geth/genesis.ssz"]
+      interval: 5s
+      retries: 5
+
+  geth-daemon:
+    build: ./dc/geth-container
+    depends_on:
+      keytool:
+        condition: service_completed_successfully
+    environment:
+      - DATADIR=/app/geth/geth
+      - JWT_SECRET=/jwt/jwt.hex
+      - GENESIS=/app/genesis.json
+    ports:
+      - "8545:8545"   # HTTP JSON-RPC
+      - "8546:8546"   # WebSocket
+      - "30303:30303" # P2P
+      - "30303:30303/udp"
+      - "8551:8551" # AuthRPC para Lighthouse
+    volumes:
+      - prysm-beacon-data:/data:z   # aca esta el genesis.ssz en el path /app/keytool/{ config.yaml genesis.json  validator_keys wallet
+      - jwt-secret:/jwt:ro
+      -  geth-data:/app:z
+    networks:
+      - eth-net
+    restart: on-failure
+    entrypoint: ["/bin/bash", "/app/geth-daemon.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/geth-daemon/8545' || exit 1"]
+      interval: 5s
+      retries: 12
+      start_period: 30s   # darle tiempo extra para inicializar
+
+
+
+  prysm-beacon:
+    image:  prysmaticlabs/prysm-beacon-chain:v5.0.4
+    container_name: prysm-beacon
+    depends_on:
+      geth-daemon:
+        condition: service_healthy
+    command: >
+     
+          --datadir=/data
+          --execution-endpoint=http://geth-daemon:8551
+          --jwt-secret=/jwt/jwt.hex
+          --p2p-host-ip=0.0.0.0
+          --p2p-max-peers=15
+          --rpc-host=0.0.0.0
+          --rpc-port=4000
+          --grpc-gateway-host=0.0.0.0
+          --grpc-gateway-port=3500
+          --genesis-state=/data/keytool/genesis.ssz
+          --chain-config-file=/data/keytool/config.yaml
+          --disable-peer-scorer
+          --verbosity=debug
+          --accept-terms-of-use
+
+    ports:
+      - "4000:4000"
+      - "3500:3500"
+      
+    volumes:
+      
+      #- jwt-secret:/jwt:ro
+      - prysm-beacon-data:/data
+      - jwt-secret:/jwt:ro
+    
+      
+    networks:
+      - eth-net
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep beacon-chain || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s   # esperar 3 minutos para que Prysm se conecte a Geth
+
+  prysm-validator:
+    image: prysmaticlabs/prysm-validator:v5.0.4
+    container_name: prysm-validator
+    depends_on:
+      prysm-beacon:
+          condition: service_healthy
+    command:     
+      - --datadir=/data
+      - --accept-terms-of-use
+      - --wallet-dir=/data/wallet
+      - --beacon-rpc-provider=prysm-beacon:4000
+      - --suggested-fee-recipient=0x0000000000000000000000000000000000000000
+      - --graffiti=localnet-validator
+      - --force-clear-db
+      - --disable-accounts-v2
+    
+
+    volumes:
+      - prysm-validator:/data:Z
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/prysm-beacon/4000' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    restart: on-failure
+
+
+
+
+  # PostgreSQL para Blockscout
+  blockscout-db:
+    image: postgres:14
+    container_name: blockscout-db
+    environment:
+      POSTGRES_USER: blockscout
+      POSTGRES_PASSWORD: blockscout_pass
+      POSTGRES_DB: blockscout
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - eth-net
+
+  # Redis para cache
+  redis:
+    image: redis:7-alpine
+    container_name: blockscout-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Blockscout Backend
+  blockscout-backend:
+    image: blockscout/blockscout:latest
+    container_name: blockscout-backend
+    depends_on:
+      - blockscout-db
+      - redis
+      - geth-init
+    command: >
+      sh -c "bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' && bin/blockscout start"
+    environment:
+        DATABASE_URL: postgresql://blockscout:blockscout_pass@blockscout-db:5432/blockscout?sslmode=disable
+        ECTO_USE_SSL: "false"
+        DATABASE_AUTO_MIGRATE: "true"
+        REDIS_URL: redis://redis:6379
+
+        # --- Blockchain Network ---
+        ETHEREUM_JSONRPC_VARIANT: geth
+        ETHEREUM_JSONRPC_HTTP_URL: http://geth:8545   # Cambiar a localnet si corresponde
+        ETHEREUM_JSONRPC_WS_URL: ws://geth:8546       # Cambiar a localnet si corresponde
+        ETHEREUM_JSONRPC_TRACE_URL: http://geth:8545  # Cambiar a localnet si corresponde
+        ETHEREUM_JSONRPC_DISABLE_ARCHIVE_BALANCES: "false"
+
+        # holesky (Testnet) config
+        #NETWORK: holesky
+        #SUBNETWORK: holesky Testnet
+        #CHAIN_ID: "17000"
+
+        # Localnet config
+        NETWORK: Development            # Cambiar a "Localnet" cuando uses tu genesis.json
+        SUBNETWORK: Geth Localnet
+        CHAIN_ID: "1337"
+
+        COIN: ETH
+
+        # --- Blockscout server / Web ---
+        BLOCKSCOUT_HOST: 127.0.0.1
+        BLOCKSCOUT_PROTOCOL: http
+        SECRET_KEY_BASE: 56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN
+        PORT: "4000"
+        LOGO: /images/blockscout_logo.svg
+
+        # --- Indexer / Fetching ---
+        INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "false"
+        INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "false"
+        FETCH_REWARDS_WAY: trace_block
+        TRACE_FIRST_BLOCK: "0"
+        TRACE_LAST_BLOCK: latest
+
+        # --- API / Webapp toggles ---
+        API_V2_ENABLED: "true"
+        DISABLE_WEBAPP: "false"
+        DISABLE_READ_API: "false"
+        DISABLE_WRITE_API: "false"
+        DISABLE_INDEXER: "false"
+
+        # --- Connection pools / performance ---
+        POOL_SIZE: "20"
+        POOL_SIZE_API: "10"
+        MIX_ENV: prod
+    ports:
+      - "4000:4000"
+    volumes:
+      - blockscout-logs:/app/logs
+    networks:
+      - eth-net
+    restart: unless-stopped
+
+  # Blockscout Frontend
+  blockscout-frontend:
+    image: ghcr.io/blockscout/frontend:latest
+    container_name: blockscout-frontend
+    depends_on:
+      - blockscout-backend
+    platform: linux/amd64
+    environment:
+      NEXT_PUBLIC_API_HOST: 0.0.0.0
+      NEXT_PUBLIC_API_PORT: "4000"
+      NEXT_PUBLIC_API_PROTOCOL: http
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_STATS_API_HOST: http://blockscout-backend:4000
+
+      # holesky config
+      #NEXT_PUBLIC_NETWORK_NAME: holesky Testnet
+      #NEXT_PUBLIC_NETWORK_SHORT_NAME: holesky
+      #NEXT_PUBLIC_NETWORK_ID: "11155111"
+
+      # Localnet config (descomentar para cambiar)
+      NEXT_PUBLIC_NETWORK_NAME: Geth Localnet
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: Localnet
+      NEXT_PUBLIC_NETWORK_ID: "1337"
+
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"
+      NEXT_PUBLIC_API_BASE_PATH: /
+      NEXT_PUBLIC_APP_HOST: 0.0.0.0
+      NEXT_PUBLIC_APP_PROTOCOL: http
+      NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs']"
+      NEXT_PUBLIC_VISUALIZE_API_HOST: http://visualizer:8051
+      NEXT_PUBLIC_IS_ACCOUNT_SUPPORTED: "true"
+      NEXT_PUBLIC_AUTH_URL: http://blockscout-backend:4000
+      NEXT_PUBLIC_LOGOUT_URL: http://blockscout-backend:4000/auth/logout
+    ports:
+      - "3000:3000"
+    networks:
+      - eth-net
+    restart: on-failure
+
+
+  # Smart Contract Verifier
+  smart-contract-verifier:
+    image: ghcr.io/blockscout/smart-contract-verifier:latest
+    container_name: blockscout-verifier
+    platform: linux/amd64
+    depends_on:
+      - blockscout-backend
+    environment:
+      STATS__BLOCKSCOUT_API_URL: "http://blockscout-backend:4000"
+      STATS__DB_URL: "postgresql://blockscout:blockscout_pass@blockscout-db:5432/blockscout?sslmode=disable"
+      STATS__BLOCKSCOUT_DB_URL: "postgresql://blockscout:blockscout_pass@blockscout-db:5432/blockscout?sslmode=disable"
+      STATS__CREATE_DATABASE: "false"
+      STATS__RUN_MIGRATIONS: "true"
+      STATS__SERVER__HTTP__ADDR: "0.0.0.0:8050"
+      RUST_LOG: info
+    ports:
+      - "8050:8050"
+    volumes:
+      - verifier-data:/tmp
+    networks:
+      - eth-net
+    restart: unless-stopped
+
+  # Visualizer service (opcional pero recomendado)
+  visualizer:
+    image: ghcr.io/blockscout/visualizer:latest
+    container_name: blockscout-visualizer
+    platform: linux/amd64
+    depends_on:
+      - geth-init
+    environment:
+      #NEXT_PUBLIC_JSON_RPC_URL: http://geth:8545
+      #NEXT_PUBLIC_WS_URL: ws://geth:8546
+      #NEXT_PUBLIC_CHAIN_ID: "11155111"
+      #NEXT_PUBLIC_NETWORK_NAME: "holesky"
+       # local net 
+      NEXT_PUBLIC_JSON_RPC_URL: http://geth:8545
+      NEXT_PUBLIC_WS_URL: ws://geth:8546
+      NEXT_PUBLIC_CHAIN_ID: "1337"
+      NEXT_PUBLIC_NETWORK_NAME: "Local Geth PoA"
+    ports:
+      - "8051:3000"
+    networks:
+      - eth-net
+    restart: unless-stopped
+
+  # Stats service (opcional pero recomendado)
+  stats:
+    image: ghcr.io/blockscout/stats:latest
+    container_name: blockscout-stats
+    platform: linux/amd64
+    depends_on:
+      - blockscout-backend
+      - blockscout-db
+    environment:
+      STATS__BLOCKSCOUT_API_URL: "http://blockscout-backend:4000"
+      STATS__DB_URL: "postgresql://blockscout:blockscout_pass@blockscout-db:5432/blockscout?sslmode=disable"
+      STATS__BLOCKSCOUT_DB_URL: "postgresql://blockscout:blockscout_pass@blockscout-db:5432/blockscout?sslmode=disable"
+      STATS__CREATE_DATABASE: "false"
+      STATS__RUN_MIGRATIONS: "true"
+      STATS__SERVER__HTTP__ADDR: "0.0.0.0:8052"
+      STATS__IGNORE_BLOCKSCOUT_API_ABSENCE: "true"
+      RUST_LOG: info
+    ports:
+      - "8052:8052"
+    networks:
+      - eth-net
+    restart: unless-stopped
+
+  # PostgreSQL dedicada para The Graph
+  graph-db:
+    build: ./dc/graph-db
+    container_name: graph-db
+    environment:
+      POSTGRES_USER: graph
+      POSTGRES_PASSWORD: graph
+      POSTGRES_DB: graph
+    volumes:
+      - graph-node-postgres:/var/lib/postgresql/data
+    networks:
+      - eth-net
+
+  # IPFS para almacenar subgrafos
+  graph-ipfs:
+    image: ipfs/go-ipfs:latest
+    depends_on:
+      - geth-init
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+      - "4001:4001"
+      - "4001:4001/udp"
+    volumes:
+      - graph-node-ipfs:/data/ipfs
+    networks:
+      - eth-net
+    restart: on-failure
+
+  # Graph Node (indexador)
+  graph-node:
+    image: graphprotocol/graph-node:latest
+    container_name: graph-node
+    depends_on:
+      - graph-db
+      - graph-ipfs
+      - geth-init
+    ports:
+      - "8000:8000"   # GraphQL HTTP
+      - "8001:8001"   # GraphQL WebSocket
+      - "8020:8020"   # JSON-RPC (admin)
+      - "8030:8030"   # Indexing status
+      - "8040:8040"   # Metrics
+    environment:
+      postgres_host: graph-db
+      postgres_user: graph
+      postgres_pass: graph
+      postgres_db: graph
+      ipfs: "graph-ipfs:5001"
+      ethereum: "http://geth:8545"
+    networks:
+      - eth-net
+    restart: on-failure
+
+
+volumes:
+  postgres-data:
+  redis-data:
+  blockscout-logs:
+  verifier-data:
+  graph-node-postgres:
+  graph-node-ipfs:
+  ## prysm geth
+  jwt-secret:       # para jwt.hex
+  prysm-genesis:    # para genesis.ssz y config.yaml
+  prysm-keys:       # para claves de validador
+  geth-data:        # tu volumen de Geth
+  prysm-beacon-data:
+  prysm-validator:
