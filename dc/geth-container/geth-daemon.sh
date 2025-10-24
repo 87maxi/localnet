@@ -1,10 +1,6 @@
 
 
-echo "✅ genesis loaded" 
-ls -l  "$GENESIS";
-
-
-
+echo "✅ genesis daemon loaded " 
 
 # 👇 SOLO inicializar si no existe la cadena
 if [ ! -d "$DATADIR/geth/chaindata" ]; then
@@ -17,30 +13,32 @@ fi
 echo "✅ list  DATADIR "
 ls -la "$DATADIR";
 
-# 4. Obtener primera cuenta
-FIRST_ADDR=$(geth --datadir "$DATADIR" account list | head -n1 | sed -n 's/.*{\([^}]*\)}.*/\1/p')
 
+MASTER_ACCOUNT=$(cat /output/contract-owner.txt);
 
-echo "✅ account $FIRST_ADDR."
+echo "✅ account $MASTER_ACCOUNT."
 
-# 6. Iniciar Geth como Execution Client (¡sin minado!)
+echo "🏃 Iniciando Geth (modo merge)..."
 exec geth \
-  --datadir "$DATADIR" \
-  --http \
-  --http.addr "0.0.0.0" \
-  --http.port 8545 \
-  --http.api eth,net,web3,debug,txpool,engine,admin \
-  --ws \
-  --ws.addr "0.0.0.0" \
-  --ws.port 8546 \
-  --ws.api eth,net,web3,debug,txpool,engine,admin \
-  --authrpc.addr 0.0.0.0 \
-  --authrpc.port 8551 \
-  --authrpc.vhosts=* \
-  --authrpc.jwtsecret "$JWT_SECRET" \
-  --networkid 1337 \
-  --syncmode full \
-  --gcmode archive \
-  --port 30303 \
-  --ipcdisable \
-  --verbosity 3 
+    --datadir="$DATADIR" \
+    --http \
+    --http.addr=0.0.0.0 \
+    --http.port=8545 \
+    --http.corsdomain="*" \
+    --http.vhosts="*" \
+    --http.api=web3,eth,net,engine,admin \
+    --ws \
+    --ws.addr=0.0.0.0 \
+    --ws.port=8546 \
+    --ws.origins="*" \
+    --ws.api=web3,eth,net \
+    --authrpc.addr=0.0.0.0 \
+    --authrpc.port=8551 \
+    --authrpc.vhosts="*" \
+    --authrpc.jwtsecret="$JWT_SECRET" \
+    --syncmode=full \
+    --networkid=1337 \
+    --port=30303 \
+    --nodiscover \
+    --maxpeers=0 \
+    --verbosity=3

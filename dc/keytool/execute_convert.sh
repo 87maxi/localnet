@@ -5,36 +5,57 @@ echo "────────────────────────�
 echo " 🦉  Inicializando Prysm Localnet (v5.0.4 oficial)"
 echo "──────────────────────────────────────────────"
 
-DATA_DIR="/data/keytool"
+echo "──────────────────────────────────────────────"
+echo " 🦉  Keytool - Generación Coordinada"
+echo "──────────────────────────────────────────────"
+
+DATA_DIR="/geth-data"
 CONFIG_FILE="/app/config.yaml"
 PRYSMCTL_BIN="/usr/local/bin/prysmctl"
 VALIDATOR_BIN="/usr/local/bin/validator"
+DUMPS="/app/output"
 
+
+GENESIS_SSZ="$DATA_DIR/keytool/genesis.ssz"
+GENESIS_JSON="$DATA_DIR/keytool/genesis.json"
+BLS_KEYS_DIR="$DATA_DIR/keytool/validator_keys"
+WALLET_PASS_FILE="$DATA_DIR/wallet-password.txt"
 WALLET_DIR="$DATA_DIR/wallet"
-WALLET_PASS_FILE="/app/geth/wallet-password.txt"
-GENESIS_SSZ="$DATA_DIR/genesis.ssz"
-GENESIS_JSON="$DATA_DIR/genesis.json"
-BLS_KEYS_DIR="$DATA_DIR/validator_keys"
 
-mkdir -p "$DATA_DIR" "$BLS_KEYS_DIR" "$(dirname "$WALLET_PASS_FILE")"
+# === TIMESTAMP COORDINADO ===
+# Usar timestamp 2 minutos en el futuro para dar tiempo a Geth de iniciar
+GENESIS_TIMESTAMP=$(date -d "+2 minutes" +%s)
+echo "📅 Timestamp de genesis coordinado: $GENESIS_TIMESTAMP ($(date -d @$GENESIS_TIMESTAMP))"
 
-# Copiar config
-cp "$CONFIG_FILE" "$DATA_DIR/config.yaml";
+# Actualizar config con timestamp coordinado
+cp "$CONFIG_FILE" "$DATA_DIR/config.yaml"
+# Tu comando corregido - así es como funciona yq:
+sed -i "s/MIN_GENESIS_TIME:.*/MIN_GENESIS_TIME: $GENESIS_TIMESTAMP/" -i "$DATA_DIR/config.yaml"
 
-cp -r /app/validator_keys/*  $BLS_KEYS_DIR;
+#  =======================================================================================
 
-cat "$DATA_DIR/config.yaml"
 
-echo "estas en generate_keystores"
-convert_keys;
-# Generar TODO con prysmctl v5.0.4
+if [ ! -d $BLS_KEYS_DIR ]; then
+  mkdir -p $BLS_KEYS_DIR;
+fi
+
+
+
+
+# Copiar keys y generar genesis
+cp -r /app/validator_keys/validator_keys/* "$BLS_KEYS_DIR/"
+
+NUM_VALIDATORS=$(ls "$BLS_KEYS_DIR"/keystore-*.json | wc -l)
+echo "📊 Validadores detectados: $NUM_VALIDATORS"
+
 $PRYSMCTL_BIN testnet generate-genesis \
-  --num-validators=8 \
+  --num-validators="$NUM_VALIDATORS" \
   --chain-config-file="$DATA_DIR/config.yaml" \
-  --output-ssz=$GENESIS_SSZ \
-  --output-json=$GENESIS_JSON
+  --genesis-time="$GENESIS_TIMESTAMP" \
+  --output-ssz="$GENESIS_SSZ" \
+  --output-json="$GENESIS_JSON"
 
-echo "✅ Génesis y keystores generados"
+echo "✅ Genesis generado para timestamp: $GENESIS_TIMESTAMP"
 
 # Crear wallet e importar
 #echo "password123" > "$WALLET_PASS_FILE"
@@ -52,5 +73,10 @@ $VALIDATOR_BIN accounts import \
   --wallet-password-file "$WALLET_PASS_FILE" \
   --account-password-file "$WALLET_PASS_FILE" \
   --accept-terms-of-use || true
+
+# copia para debug 
+
+cp -r $DATA_DIR $DUMPS;
+
 
 echo "✅ Listo"

@@ -3,8 +3,8 @@ import os
 import json
 from eth_account import Account
 
-KEYSTORE_DIR = "/app/geth/keystore"
-PASSWORD_FILE = "/app/geth/password.txt"
+KEYSTORE_DIR = "/geth-data/keystore"
+PASSWORD_FILE = "/geth-data/password.txt"
 OUTPUT_FILE = "/app/output/accounts.txt"
 
 # Leer la contraseña

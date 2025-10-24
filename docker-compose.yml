@@ -9,14 +9,16 @@ services:
   # =============== INICIALIZADOR (se ejecuta una vez) ===============
 
   # Geth localnet con modo debug
-
+  # definir un name para esta imagen y que sea legible para los otro servicios 
   geth-init:
     build: ./dc/geth-container
+    user: "0:0"
     volumes:
-      - geth-data:/root/.ethereum
-      - jwt-secret:/jwt
+      - geth-data:/geth-data:z
+      - jwt-secret:/jwt-secret:z
       - ./dc/geth-container/jwt.hex:/app/jwt.hex
-      - prysm-genesis:/data
+      - ./volumen/output:/output
+      #- prysm-genesis:/data
     networks:
       - eth-net
     restart: "no"
@@ -29,14 +31,13 @@ services:
       geth-init:
         condition: service_completed_successfully
     volumes:
-      -  geth-data:/app/geth
+      -  geth-data:/geth-data:z
       - ./volumen/output:/app/output
       - ./dc/keytool/config.yaml:/app/config.yaml
-      -  prysm-beacon-data:/data
     command: ["/execute_convert.sh"]
     restart: "no"
     healthcheck:
-      test: ["CMD", "test", "-f", "/app/geth/genesis.ssz"]
+      test: ["CMD", "test", "-f", "/geth-data/keytool/genesis.ssz"]
       interval: 5s
       retries: 5
 
@@ -46,9 +47,9 @@ services:
       keytool:
         condition: service_completed_successfully
     environment:
-      - DATADIR=/app/geth/geth
-      - JWT_SECRET=/jwt/jwt.hex
-      - GENESIS=/app/genesis.json
+      - DATADIR=/geth-data/geth
+      - JWT_SECRET=/jwt-secret/jwt.hex
+      - GENESIS=/geth-data/genesis.json
     ports:
       - "8545:8545"   # HTTP JSON-RPC
       - "8546:8546"   # WebSocket
@@ -56,18 +57,20 @@ services:
       - "30303:30303/udp"
       - "8551:8551" # AuthRPC para Lighthouse
     volumes:
-      - prysm-beacon-data:/data:z   # aca esta el genesis.ssz en el path /app/keytool/{ config.yaml genesis.json  validator_keys wallet
-      - jwt-secret:/jwt:ro
-      -  geth-data:/app:z
+      #- prysm-beacon-data:/data:z   # aca esta el genesis.ssz en el path /app/keytool/{ config.yaml genesis.json  validator_keys wallet
+      - jwt-secret:/jwt-secret:z
+      -  geth-data:/geth-data:z
+      - ./volumen/output:/output
     networks:
       - eth-net
     restart: on-failure
     entrypoint: ["/bin/bash", "/app/geth-daemon.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/geth-daemon/8545' || exit 1"]
-      interval: 5s
-      retries: 12
-      start_period: 30s   # darle tiempo extra para inicializar
+      test: ["CMD", "/app/healthcheck-deposit.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
 
 
@@ -76,44 +79,48 @@ services:
     container_name: prysm-beacon
     depends_on:
       geth-daemon:
-        condition: service_healthy
+        condition: service_healthy  # ✅ ESPERA HEALTHCHECK
     command: >
-     
-          --datadir=/data
-          --execution-endpoint=http://geth-daemon:8551
-          --jwt-secret=/jwt/jwt.hex
-          --p2p-host-ip=0.0.0.0
-          --p2p-max-peers=15
-          --rpc-host=0.0.0.0
-          --rpc-port=4000
-          --grpc-gateway-host=0.0.0.0
-          --grpc-gateway-port=3500
-          --genesis-state=/data/keytool/genesis.ssz
-          --chain-config-file=/data/keytool/config.yaml
-          --disable-peer-scorer
-          --verbosity=debug
-          --accept-terms-of-use
+        --datadir=/prysm-beacon-data
+        --execution-endpoint=http://geth-daemon:8551
+        --jwt-secret=/jwt-secret/jwt.hex
+        --deposit-contract=0x0000000000000000000000000000000000000001
+        --p2p-host-ip=0.0.0.0
+        --p2p-max-peers=15
+        --rpc-host=0.0.0.0
+        --rpc-port=4000
+        --grpc-gateway-host=0.0.0.0
+        --grpc-gateway-port=3500
+        --genesis-state=/geth-data/keytool/genesis.ssz
+        --chain-config-file=/geth-data/config.yaml
+        --disable-peer-scorer
+        --verbosity=debug
+        --accept-terms-of-use
+        --min-sync-peers=0
+        --force-clear-db
+        --slots-per-archive-point=1024
+        --disable-staking-contract-check
+        --dev
 
     ports:
       - "4000:4000"
       - "3500:3500"
       
     volumes:
-      
-      #- jwt-secret:/jwt:ro
-      - prysm-beacon-data:/data
-      - jwt-secret:/jwt:ro
+      - prysm-beacon-data:/prysm-beacon-data:z
+      - jwt-secret:/jwt-secret:z
+      - geth-data:/geth-data:z
     
       
     networks:
       - eth-net
-    restart: on-failure
     healthcheck:
-      test: ["CMD-SHELL", "pgrep beacon-chain || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 180s   # esperar 3 minutos para que Prysm se conecte a Geth
+      test: ["CMD", "stat", "/proc/1/status"]  # ✅ Verifica que el proceso existe
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
 
   prysm-validator:
     image: prysmaticlabs/prysm-validator:v5.0.4
@@ -121,27 +128,27 @@ services:
     depends_on:
       prysm-beacon:
           condition: service_healthy
-    command:     
-      - --datadir=/data
-      - --accept-terms-of-use
-      - --wallet-dir=/data/wallet
-      - --beacon-rpc-provider=prysm-beacon:4000
-      - --suggested-fee-recipient=0x0000000000000000000000000000000000000000
-      - --graffiti=localnet-validator
-      - --force-clear-db
-      - --disable-accounts-v2
-    
+    command: >    
+      --datadir=/prysm-validator
+      --accept-terms-of-use
+      --wallet-dir=/geth-data/wallet
+      --wallet-password-file=/geth-data/wallet-password.txt
+      --beacon-rpc-provider=prysm-beacon:4000
+      --suggested-fee-recipient=0x93f2450aab936cdfd17a164a502b3d762b26e58e
+      --graffiti=localnet-validator
+      --force-clear-db
 
     volumes:
-      - prysm-validator:/data:Z
+      - prysm-validator:/prysm-validator:z
+      - geth-data:/geth-data:ro
     networks:
       - eth-net
     healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/prysm-beacon/4000' || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "test -f /prysm-validator/validator.db/LOCK && pgrep validator || exit 1"]
+      interval: 15s
+      timeout: 10s
       retries: 30
-      start_period: 120s
+      start_period: 90s
     restart: on-failure
 
 
