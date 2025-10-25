@@ -26,7 +26,7 @@ exec geth \
     --http.port=8545 \
     --http.corsdomain="*" \
     --http.vhosts="*" \
-    --http.api=web3,eth,net,engine,admin \
+    --http.api=web3,eth,net,engine,admin,debug,txpool,personal,miner \
     --ws \
     --ws.addr=0.0.0.0 \
     --ws.port=8546 \
@@ -41,4 +41,10 @@ exec geth \
     --port=30303 \
     --nodiscover \
     --maxpeers=0 \
-    --verbosity=3
+    --verbosity=3 \
+    --metrics \
+    --metrics.addr=0.0.0.0 \
+    --metrics.port=6060 \
+    --pprof \
+    --pprof.addr=0.0.0.0 \
+    --pprof.port=6070 \

@@ -1,11 +1,5 @@
-networks:
-  eth-net:
-    name: eth-net
-    driver: bridge
-
 
 services:
-
   # =============== INICIALIZADOR (se ejecuta una vez) ===============
 
   # Geth localnet con modo debug
@@ -56,6 +50,8 @@ services:
       - "30303:30303" # P2P
       - "30303:30303/udp"
       - "8551:8551" # AuthRPC para Lighthouse
+      - 6060:6060
+      - 6070:6070
     volumes:
       #- prysm-beacon-data:/data:z   # aca esta el genesis.ssz en el path /app/keytool/{ config.yaml genesis.json  validator_keys wallet
       - jwt-secret:/jwt-secret:z
@@ -162,23 +158,29 @@ services:
       POSTGRES_USER: blockscout
       POSTGRES_PASSWORD: blockscout_pass
       POSTGRES_DB: blockscout
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U blockscout"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      prysm-beacon:
+          condition: service_healthy
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - eth-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Redis para cache
   redis:
     image: redis:7-alpine
     container_name: blockscout-redis
     command: redis-server --appendonly yes
+    depends_on:
+      prysm-beacon:
+          condition: service_healthy
     volumes:
       - redis-data:/data
     ports:
@@ -197,8 +199,7 @@ services:
     container_name: blockscout-backend
     depends_on:
       - blockscout-db
-      - redis
-      - geth-init
+      
     command: >
       sh -c "bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' && bin/blockscout start"
     environment:
@@ -230,7 +231,7 @@ services:
         BLOCKSCOUT_HOST: 127.0.0.1
         BLOCKSCOUT_PROTOCOL: http
         SECRET_KEY_BASE: 56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN
-        PORT: "4000"
+        PORT: "4040"
         LOGO: /images/blockscout_logo.svg
 
         # --- Indexer / Fetching ---
@@ -252,7 +253,7 @@ services:
         POOL_SIZE_API: "10"
         MIX_ENV: prod
     ports:
-      - "4000:4000"
+      - "4040:4040"
     volumes:
       - blockscout-logs:/app/logs
     networks:
@@ -268,7 +269,7 @@ services:
     platform: linux/amd64
     environment:
       NEXT_PUBLIC_API_HOST: 0.0.0.0
-      NEXT_PUBLIC_API_PORT: "4000"
+      NEXT_PUBLIC_API_PORT: "4040"
       NEXT_PUBLIC_API_PROTOCOL: http
       NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
       NEXT_PUBLIC_STATS_API_HOST: http://blockscout-backend:4000
@@ -354,7 +355,6 @@ services:
     platform: linux/amd64
     depends_on:
       - blockscout-backend
-      - blockscout-db
     environment:
       STATS__BLOCKSCOUT_API_URL: "http://blockscout-backend:4000"
       STATS__DB_URL: "postgresql://blockscout:blockscout_pass@blockscout-db:5432/blockscout?sslmode=disable"
@@ -378,6 +378,9 @@ services:
       POSTGRES_USER: graph
       POSTGRES_PASSWORD: graph
       POSTGRES_DB: graph
+    depends_on:
+      prysm-beacon:
+          condition: service_healthy
     volumes:
       - graph-node-postgres:/var/lib/postgresql/data
     networks:
@@ -387,7 +390,8 @@ services:
   graph-ipfs:
     image: ipfs/go-ipfs:latest
     depends_on:
-      - geth-init
+      prysm-beacon:
+          condition: service_healthy
     ports:
       - "5001:5001"
       - "8080:8080"
@@ -404,9 +408,8 @@ services:
     image: graphprotocol/graph-node:latest
     container_name: graph-node
     depends_on:
-      - graph-db
-      - graph-ipfs
-      - geth-init
+      prysm-beacon:
+          condition: service_healthy
     ports:
       - "8000:8000"   # GraphQL HTTP
       - "8001:8001"   # GraphQL WebSocket
@@ -439,3 +442,8 @@ volumes:
   geth-data:        # tu volumen de Geth
   prysm-beacon-data:
   prysm-validator:
+
+networks:
+  eth-net:
+    name: eth-net
+    driver: bridge
