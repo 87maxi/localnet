@@ -13,14 +13,19 @@ DATA_DIR="/geth-data"
 CONFIG_FILE="/app/config.yaml"
 PRYSMCTL_BIN="/usr/local/bin/prysmctl"
 VALIDATOR_BIN="/usr/local/bin/validator"
-DUMPS="/app/output"
-
+DUMPS="/app/output/keytool"
+mkdir -p $DUMPS;
 
 GENESIS_SSZ="$DATA_DIR/keytool/genesis.ssz"
 GENESIS_JSON="$DATA_DIR/keytool/genesis.json"
 BLS_KEYS_DIR="$DATA_DIR/keytool/validator_keys"
 WALLET_PASS_FILE="$DATA_DIR/wallet-password.txt"
 WALLET_DIR="$DATA_DIR/wallet"
+
+mkdir -p $WALLET_DIR;
+
+echo $GETH_WALLET_PASSWORD > $WALLET_PASS_FILE;
+
 
 # === TIMESTAMP COORDINADO ===
 # Usar timestamp 2 minutos en el futuro para dar tiempo a Geth de iniciar
@@ -74,7 +79,10 @@ $VALIDATOR_BIN accounts import \
   --account-password-file "$WALLET_PASS_FILE" \
   --accept-terms-of-use || true
 
-# copia para debug 
+# copia para debug
+
+
+convert_keys;
 
 cp -r $DATA_DIR $DUMPS;
 

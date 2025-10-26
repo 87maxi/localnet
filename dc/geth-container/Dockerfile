@@ -3,6 +3,9 @@ FROM  ethereum/client-go:v1.13.15
 WORKDIR /app
 
 ENV NUM_ACCOUNT=8
+ENV GETH_PASSWORD="no_tiene_password"
+ENV GETH_WALLET_PASSWORD="no_tiene_wallet_password"
+ENV GETH_JWT_HEX="0000000000000000000000000000000000000000000000000000000"
 
 
 ENV SOLC_VERSION=v0.8.19
@@ -25,20 +28,14 @@ RUN apk add --no-cache libstdc++ gcompat
 
 RUN solc --version
 
-COPY ./init-contract /init-contract
+COPY ./init-contract /app/init-contract
 
-RUN chmod +x -R /init-contract
+RUN chmod +x -R /app/init-contract
 
 
 # Copiar scripts
-COPY geth-init.sh /app/geth-init.sh
-COPY geth-daemon.sh /app/geth-daemon.sh
-COPY generate_keystore_and_genesis.sh /app/generate_keystore_and_genesis.sh
-COPY generate_genesis_with_contract.sh /app/generate_genesis_with_contract.sh
-COPY healthcheck-deposit.sh /app/healthcheck-deposit.sh
-COPY password.txt /password.txt
-COPY wallet-password.txt /wallet-password.txt
-COPY jwt.hex /jwt.hex
+COPY ./scripts/* /app/
+
 # Permisos
 RUN chmod +x -R /app
 

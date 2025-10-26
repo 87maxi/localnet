@@ -7,6 +7,8 @@ echo "🔧 Generando genesis con DepositContract y cuenta dedicada..."
 # CONFIGURACIÓN
 # =============================================================================
 
+CONTRACT_DIR="/app/init-contract"
+
 GENESIS_TMP="$DATADIR_TMP/genesis.json"
 
 CONTRACT_ADDRESS="0x0000000000000000000000000000000000000001"  # ✅ Dirección específica para contrato
@@ -38,21 +40,21 @@ fi
 # 2. COMPILAR DEPOSIT CONTRACT
 # =============================================================================
 echo "📦 Compilando DepositContract..."
-cd $INIT_CONTRACT
+cd $CONTRACT_DIR;
 
 if [ ! -f "DepositContract.sol" ]; then
     echo "❌ DepositContract.sol no encontrado"
     exit 1
 fi
 
-solc --bin --abi --optimize DepositContract.sol -o build/ --overwrite
+solc --bin --abi --optimize "$CONTRACT_DIR/DepositContract.sol" -o "$CONTRACT_DIR/build" --overwrite
 
-if [ ! -f "build/DepositContract.bin" ]; then
+if [ ! -f "$CONTRACT_DIR/build/DepositContract.bin" ]; then
     echo "❌ Error en compilación"
     exit 1
 fi
 
-BYTECODE=$(cat build/DepositContract.bin)
+BYTECODE=$(cat "$CONTRACT_DIR/build/DepositContract.bin")
 echo "✅ Contract compiled - Bytecode: ${#BYTECODE} chars"
 
 # =============================================================================
@@ -131,7 +133,7 @@ echo "💾 Guardando metadata..."
 mkdir -p /output
 echo "$CONTRACT_ADDRESS" > /output/contract-address.txt
 echo "$CONTRACT_ACCOUNT" > /output/contract-owner.txt
-cp /app/init-contract/build/DepositContract.abi /output/
+cp -r /app/init-contract/build /output/
 
 # Crear archivo de configuración
 cat > /output/deployment-info.json << EOF
@@ -180,9 +182,5 @@ else
     exit 1
 fi
 
-
-
-cp -r $KEYSTORE  $DATADIR;
-cp $GENESIS_TMP $DATADIR;
 
 echo "🚀 GENESIS CON CONTRATO Y CUENTA DEDICADA GENERADO EXITOSAMENTE"

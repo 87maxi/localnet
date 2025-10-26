@@ -12,11 +12,17 @@ export GENESIS="$DATADIR/genesis.json"
 export GENESIS_POW="$DATADIR_TMP/genesis.json"
 export ETHERBASE=""
 export JWT_PATH="/jwt-secret"
-export NUM_ACCOUNT=8
 export INIT_CONTRACT="/init-contract"
 
-cp /password.txt "$DATADIR"
-cp /wallet-password.txt "$DATADIR"
+
+
+
+echo  $GETH_PASSWORD > $PASSWORD_FILE;
+echo  $GETH_WALLET_PASSWORD > $WALLET_PASSWORD_FILE;
+
+unset GETH_PASSWORD
+unset GETH_WALLET_PASSWORD
+
 
 
 rm -rf $DATADIR_TMP;
@@ -60,11 +66,10 @@ KEYSTORE \
 DATADIR_TMP \
 PASSWORD_FILE \
 GENESIS \
-GENESIS_POW  \
 ETHERBASE \
 JWT_PATH \
 NUM_ACCOUNT \
-ACCOUNTS_CREATED \
+ACCOUNTS_CREATED_delete \
 WALLET_PASSWORD_FILE \
 INIT_CONTRACT
 
@@ -73,7 +78,7 @@ INIT_CONTRACT
 
 # Ejecutar scripts
 run_script "/app/generate_genesis_with_contract.sh"
-
+cp $GENESIS_TMP $DATADIR;
 
 echo "🎉 Todos los scripts completados exitosamente"
 
@@ -105,7 +110,22 @@ if [ -f "/output/contract-owner.txt" ]; then
     echo "✅ Cuenta dedicada: $CONTRACT_ACCOUNT"
 fi
 
+
+
+
+
 echo ""
 echo "🚀 PROCESO COMPLETADO"
 echo "🎯 DepositContract listo en dirección fija"
 echo "👤 Cuenta dedicada generada con fondos"
+
+
+source "/app/generate_genesis_with_contract.sh";
+
+
+echo "#################### $NUM_ACCOUNT"
+
+generate_accounts;
+
+
+cp -r $KEYSTORE  $DATADIR;

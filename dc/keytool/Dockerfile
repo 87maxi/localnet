@@ -6,6 +6,7 @@ FROM  python:3.11-slim AS keytool
 ARG TARGETARCH=amd64
 ARG GO_VERSION=1.23.1
 ARG PRYSM_VERSION=v5.0.4
+ENV GETH_WALLET_PASSWORD="no_tiene_wallet_password"
 
 WORKDIR /app
 
@@ -60,9 +61,11 @@ RUN wget https://github.com/OffchainLabs/prysm/releases/download/${PRYSM_VERSION
 # ---------------------------------------------------------
 COPY convert_keys.py /usr/local/bin/convert_keys
 COPY execute_convert.sh /execute_convert.sh
-COPY generate_keystores.py /usr/local/bin/generate_keystores
-RUN chmod +x /usr/local/bin/convert_keys /execute_convert.sh /usr/local/bin/generate_keystores \
+#COPY generate_keystores.py /usr/local/bin/generate_keystores
+RUN chmod +x /usr/local/bin/convert_keys /execute_convert.sh \
  && sed -i 's/\r$//' /execute_convert.sh
+
+#wallet memonics tener en cuenta que estos memonics estan relacionados a la password que se defina inicialmente en geth con lo cual cuando los genere tiene que estar con esa password
 
 COPY validator_keys/ /app/validator_keys
 
