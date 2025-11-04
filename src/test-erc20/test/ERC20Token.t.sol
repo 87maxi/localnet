@@ -11,15 +11,15 @@ contract ERC20TokenTest is Test {
     address user2 = address(0x3);
     
     function setUp() public {
-        token = new ERC20Token(1000);
+        token = new ERC20Token("MyToken", "MTK", 1_000_000 * 10**18);
     }
     
     function testName() public {
-        assertEq(token.name(), "Test Token");
+        assertEq(token.name(), "MyToken");
     }
     
     function testSymbol() public {
-        assertEq(token.symbol(), "TEST");
+        assertEq(token.symbol(), "MTK");
     }
     
     function testDecimals() public {
@@ -27,17 +27,17 @@ contract ERC20TokenTest is Test {
     }
     
     function testTotalSupply() public {
-        assertEq(token.totalSupply(), 1000 * 10 ** 18);
+        assertEq(token.totalSupply(), 1_000_000 * 10**18);
     }
     
     function testInitialBalance() public {
-        assertEq(token.balanceOf(address(this)), 1000 * 10 ** 18);
+        assertEq(token.balanceOf(address(this)), 1_000_000 * 10**18);
     }
     
     function testTransfer() public {
         address sender = address(this);
         address recipient = address(0x4);
-        uint256 amount = 100 * 10 ** 18;
+        uint256 amount = 100 * 10**18;
         
         uint256 senderBalanceBefore = token.balanceOf(sender);
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
@@ -50,7 +50,7 @@ contract ERC20TokenTest is Test {
     
     function testTransferInsufficientBalance() public {
         address recipient = address(0x4);
-        uint256 amount = 2000 * 10 ** 18;
+        uint256 amount = 2_000_000 * 10**18;
         
         vm.expectRevert("Insufficient balance");
         token.transfer(recipient, amount);
@@ -58,7 +58,7 @@ contract ERC20TokenTest is Test {
     
     function testApprove() public {
         address spender = address(0x4);
-        uint256 amount = 100 * 10 ** 18;
+        uint256 amount = 100 * 10**18;
         
         assertTrue(token.approve(spender, amount));
         assertEq(token.allowance(address(this), spender), amount);
@@ -68,14 +68,14 @@ contract ERC20TokenTest is Test {
         address from = address(this);
         address to = address(0x5);
         address spender = address(0x6);
-        uint256 amount = 100 * 10 ** 18;
+        uint256 amount = 100 * 10**18;
         
         token.approve(spender, amount);
         
         vm.prank(spender);
         assertTrue(token.transferFrom(from, to, amount));
         
-        assertEq(token.balanceOf(from), (1000 * 10 ** 18) - amount);
+        assertEq(token.balanceOf(from), (1_000_000 * 10**18) - amount);
         assertEq(token.balanceOf(to), amount);
         assertEq(token.allowance(from, spender), 0);
     }
@@ -84,7 +84,7 @@ contract ERC20TokenTest is Test {
         address from = address(this);
         address to = address(0x5);
         address spender = address(0x6);
-        uint256 amount = 2000 * 10 ** 18;
+        uint256 amount = 2_000_000 * 10**18;
         
         token.approve(spender, amount);
         
@@ -97,7 +97,7 @@ contract ERC20TokenTest is Test {
         address from = address(this);
         address to = address(0x5);
         address spender = address(0x6);
-        uint256 amount = 100 * 10 ** 18;
+        uint256 amount = 100 * 10**18;
         
         vm.prank(spender);
         vm.expectRevert("Insufficient allowance");

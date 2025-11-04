@@ -2,49 +2,50 @@
 
 services:
   # =============== INICIALIZADOR (se ejecuta una vez) ===============
-  geth-init:
-    build: ./dc/geth-container
-    user: "0:0"
-    environment:
-       - GETH_JWT_HEX=${GETH_JWT_HEX}
-       - GETH_PASSWORD=${GETH_PASSWORD}
-       - NUM_ACCOUNT=${NUM_ACCOUNT}
-    volumes:
-      - geth-data:/geth-data:z
-      - jwt-secret:/jwt-secret:z
-      - ./volumen/output:/output:z
-    networks:
-      - eth-net
-    restart: "no"
-    entrypoint: ["/bin/bash", "/app/geth-init.sh"]  
+  # geth-init:
+  #   build: ./dc/geth-container
+  #   user: "0:0"
+  #   environment:
+  #      - GETH_JWT_HEX=${GETH_JWT_HEX}
+  #      - GETH_PASSWORD=${GETH_PASSWORD}
+  #      - NUM_ACCOUNT=${NUM_ACCOUNT}
+  #   volumes:
+  #     - geth-data:/geth-data:z
+  #     - jwt-secret:/jwt-secret:z
+  #     - ./volumen/output:/output:z
+  #   networks:
+  #     - eth-net
+  #   restart: "no"
+  #   entrypoint: ["/bin/bash", "/app/geth-init.sh"]  
 
-  keytool:
-    build: ./dc/keytool
-    container_name: keytool
-    environment:
-      - GETH_WALLET_PASSWORD=${GETH_WALLET_PASSWORD}
-    depends_on:
-      geth-init:
-        condition: service_completed_successfully
-    volumes:
-      - geth-data:/geth-data:z
-      - ./volumen/output:/app/output:z
-      - ./dc/keytool/config.yaml:/app/config.yaml
-    command: ["/execute_convert.sh"]
-    restart: "no"
-    healthcheck:
-      test: ["CMD", "test", "-f", "/geth-data/keytool/genesis.ssz"]
-      interval: 5s
-      retries: 5
+  # keytool:
+  #   build: ./dc/keytool
+  #   container_name: keytool
+  #   environment:
+  #     - GETH_WALLET_PASSWORD=${GETH_WALLET_PASSWORD}
+  #   depends_on:
+  #     geth-init:
+  #       condition: service_completed_successfully
+  #   volumes:
+  #     - geth-data:/geth-data:z
+  #     - ./volumen/output:/app/output:z
+  #     - ./dc/keytool/config.yaml:/app/config.yaml
+  #   command: ["/execute_convert.sh"]
+  #   restart: "no"
+  #   healthcheck:
+  #     test: ["CMD", "test", "-f", "/geth-data/keytool/genesis.ssz"]
+  #     interval: 5s
+  #     retries: 5
 
   # =============== CORE BLOCKCHAIN ===============
   geth-daemon:
     build: ./dc/geth-container
     container_name: geth-daemon
-    depends_on:
-      keytool:
-        condition: service_completed_successfully
+    # depends_on:
+    #   geth-init:
+    #     condition: service_completed_successfully
     environment:
+      - NETWORK=sepolia
       - DATADIR=/geth-data/geth
       - JWT_SECRET=/jwt-secret/jwt.hex
       - GENESIS=/geth-data/genesis.json
@@ -61,9 +62,9 @@ services:
     networks:
       - eth-net
     restart: on-failure
-    entrypoint: ["/bin/bash", "/app/geth-daemon.sh"]
+    entrypoint: ["/bin/bash", "/app/geth-sepolia.sh"]
     healthcheck:
-      test: ["CMD", "/app/healthcheck-deposit.sh"]
+      test: ["CMD", "/app/healthcheck-sepolia.sh"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -76,189 +77,122 @@ services:
       geth-daemon:
         condition: service_healthy
     command: >
+        --sepolia
         --datadir=/prysm-beacon-data
         --execution-endpoint=http://geth-daemon:8551
         --jwt-secret=/jwt-secret/jwt.hex
-        --p2p-host-ip=0.0.0.0
-        --p2p-max-peers=15
-        --p2p-udp-port=12000
-        --p2p-tcp-port=13000
-        --rpc-host=0.0.0.0
-        --rpc-port=4000
-        --grpc-gateway-host=0.0.0.0
-        --grpc-gateway-port=3500
-        --genesis-state=/geth-data/keytool/genesis.ssz
-        --chain-config-file=/geth-data/config.yaml
+        --checkpoint-sync-url=https://checkpoint-sync.sepolia.ethpandaops.io
         --verbosity=debug
         --accept-terms-of-use
-        --min-sync-peers=0
-        --slots-per-archive-point=1024
-        --disable-staking-contract-check
-        --eth1-header-req-limit=5000
-        --enable-debug-rpc-endpoints
-            
-        
+        --force-clear-db
     ports:
-    - "4000:4000"
-    - "3500:3500"
-    - "12000:12000/udp"
-    - "13000:13000"
+      - "4000:4000"
+      - "3500:3500"
+      - "12000:12000/udp"
+      - "13000:13000"
     volumes:
       - prysm-beacon-data:/prysm-beacon-data:z
       - jwt-secret:/jwt-secret:z
-      - geth-data:/geth-data:z
     networks:
       - eth-net
-    healthcheck:
-      test: ["CMD", "stat", "/proc/1/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    restart: unless-stopped
-
-  prysm-validator:
-    image: prysmaticlabs/prysm-validator:v5.0.4
-    container_name: prysm-validator
-    depends_on:
-      prysm-beacon:
-        condition: service_healthy
-    command: >    
-      --datadir=/prysm-validator
-      --accept-terms-of-use
-      --wallet-dir=/geth-data/wallet
-      --wallet-password-file=/geth-data/wallet-password.txt
-      --beacon-rpc-provider=prysm-beacon:4000      
-      --graffiti=localnet-validator
-      --force-clear-db
-    volumes:
-      - prysm-validator:/prysm-validator:z
-      - geth-data:/geth-data:ro
-    networks:
-      - eth-net
-    healthcheck:
-      test: ["CMD-SHELL", "test -f /prysm-validator/validator.db/LOCK && pgrep validator || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 30
-      start_period: 90s
-    restart: on-failure
 
   # =============== blockscout ===============
 
   # PostgreSQL separado pero simple
-  blockscout-db:
-    image: postgres:15-alpine
-    container_name: blockscout-db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: blockscout
-    command: >
-      postgres
-      -c max_connections=200
-      -c shared_buffers=256MB
-      -c effective_cache_size=1GB
-      -c maintenance_work_mem=64MB
-      -c checkpoint_completion_target=0.7
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
-    depends_on:
-        prysm-beacon:
-          condition: service_healthy
-    volumes:
-      - blockscout-data:/var/lib/postgresql/data
-    ports:
-      - 5432:5432
-    networks:
-      - eth-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    restart: on-failure
+  # blockscout-db:
+  #   image: postgres:15-alpine
+  #   container_name: blockscout-db
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: blockscout
+  #   command: >
+  #     postgres
+  #     -c max_connections=200
+  #     -c shared_buffers=256MB
+  #     -c effective_cache_size=1GB
+  #     -c maintenance_work_mem=64MB
+  #     -c checkpoint_completion_target=0.7
+  #     -c wal_buffers=16MB
+  #     -c default_statistics_target=100
+  #   depends_on:
+  #       prysm-beacon:
+  #         condition: service_healthy
+  #   volumes:
+  #     - blockscout-data:/var/lib/postgresql/data
+  #   ports:
+  #     - 5432:5432
+  #   networks:
+  #     - eth-net
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #   restart: on-failure
 
 
 
   # Servicio DEDICADO para migraciones
-  blockscout-migrations:
-    image: blockscout/blockscout:latest
-    container_name: blockscout-migrations
-    depends_on:
-      blockscout-db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@blockscout-db:5432/blockscout
-      ECTO_USE_SSL: "false"
-      MIX_ENV: prod
-    command: >
-      sh -c "
-        echo '🕐 Waiting for database...' &&
-        sleep 10 &&
-        echo '🚀 Running Blockscout database migrations...' &&
-        bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' &&
-        echo '✅ Migrations completed successfully!' &&
-        echo '🎉 Database is ready for Blockscout!'
-      "
-    networks:
-      - eth-net
-    restart: "no"  # Se ejecuta una vez y termina
+  # blockscout-migrations:
+  #   image: blockscout/blockscout:latest
+  #   container_name: blockscout-migrations
+  #   depends_on:
+  #     blockscout-db:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgresql://postgres:postgres@blockscout-db:5432/blockscout
+  #     ECTO_USE_SSL: "false"
+  #     MIX_ENV: prod
+  #   command: >
+  #     sh -c "
+  #       echo '🕐 Waiting for database...' &&
+  #       sleep 10 &&
+  #       echo '🚀 Running Blockscout database migrations...' &&
+  #       bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' &&
+  #       echo '✅ Migrations completed successfully!' &&
+  #       echo '🎉 Database is ready for Blockscout!'
+  #     "
+  #   networks:
+  #     - eth-net
+  #   restart: "no"  # Se ejecuta una vez y termina
 
 
 
-  blockscout-simple:
-    image: blockscout/blockscout:latest
-    container_name: blockscout-simple
-    depends_on:
-      blockscout-migrations:
-        condition: service_completed_successfully
-      geth-daemon:
-        condition: service_healthy
-    ports:
-      - "4040:4000"  # ✅ CORRECTO: Host:4040 → Container:4000
-    environment:
-        # Database
-        DATABASE_URL: postgresql://postgres:postgres@blockscout-db:5432/blockscout
-        ECTO_USE_SSL: "false"
-        POOL_SIZE: "20"
+  # blockscout-simple:
+  #   image: blockscout/blockscout:latest
+  #   container_name: blockscout-simple
+  #   depends_on:
+  #     blockscout-migrations:
+  #       condition: service_completed_successfully
+  #     geth-daemon:
+  #       condition: service_healthy
+  #   ports:
+  #     - "4040:4000"
+  #   environment:
+  #       DATABASE_URL: postgresql://postgres:postgres@blockscout-db:5432/blockscout
+  #       ECTO_USE_SSL: "false"
+  #       POOL_SIZE: "20"
         
-        # ✅ CONFIGURACIÓN MEJORADA - FORMATO EXPLÍCITO
-        ETHEREUM_JSONRPC_HTTP_URL: "http://geth-daemon:8545"
-        ETHEREUM_JSONRPC_WS_URL: "ws://geth-daemon:8546"
-        ETHEREUM_JSONRPC_VARIANT: "geth"
-        ETHEREUM_JSONRPC_TRANSPORT: "http"
+  #       # ✅ CONFIGURACIÓN SEPOLIA
+  #       ETHEREUM_JSONRPC_HTTP_URL: "http://geth-daemon:8545"
+  #       ETHEREUM_JSONRPC_WS_URL: "ws://geth-daemon:8546"
+  #       ETHEREUM_JSONRPC_VARIANT: "geth"
+  #       ETHEREUM_JSONRPC_TRANSPORT: "http"
         
-        # ✅ CONFIGURACIÓN DE RED EXPLÍCITA
-        NETWORK: "Local Geth"
-        SUBNETWORK: "Development Network"
-        CHAIN_ID: "1337"
-        COIN: "ETH"
-        SHOW_PRICE: "false"
-        DISABLE_EXCHANGE_RATES: "true"
+  #       # ✅ CONFIGURACIÓN DE RED SEPOLIA
+  #       NETWORK: "Sepolia Testnet"
+  #       SUBNETWORK: "Ethereum Testnet"
+  #       CHAIN_ID: "11155111"
+  #       COIN: "ETH"
+  #       SHOW_PRICE: "true"
+  #       DISABLE_EXCHANGE_RATES: "false"
         
-        # ✅ CONFIGURACIÓN DE API
-        DISABLE_WEBAPP: "false"
-        DISABLE_READ_API: "false"
-        DISABLE_WRITE_API: "true"
-        
-        # ✅ INDEXADO
-        DISABLE_INDEXER: "false"
-        INDEXER_MEMORY_LIMIT: "2GB"
-        
-        # ✅ MISC
-        MIX_ENV: "prod"
-        PORT: "4000"
-        SECRET_KEY_BASE: "8c6cf1a322c6f7b09b638271a4d5e4f04119a9f4c7d5aaf6a93e3e5c08c8e8e7"
-        
-        # ✅ LOGS DETALLADOS (temporal para debugging)
-        LOG_LEVEL: "debug"
-        LOG_IO: "true"
-        
-    command: ["bin/blockscout", "start"]
-    networks:
-      - eth-net
-    restart: unless-stopped
+  #       # Otros configs se mantienen igual...
+  #   command: ["bin/blockscout", "start"]
+  #   networks:
+  #     - eth-net
+  #   restart: unless-stopped
 
   #blockscout-frontend:
   #  build:

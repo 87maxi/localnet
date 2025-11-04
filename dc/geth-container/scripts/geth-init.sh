@@ -77,8 +77,15 @@ INIT_CONTRACT
 
 
 # Ejecutar scripts
-run_script "/app/generate_genesis_with_contract.sh"
-cp $GENESIS_TMP $DATADIR;
+#run_script "/app/generate_genesis_with_contract.sh"
+
+
+
+
+echo $GENESIS
+
+
+#cp $GENESIS_TMP $DATADIR;
 
 echo "🎉 Todos los scripts completados exitosamente"
 
@@ -129,3 +136,5 @@ generate_accounts;
 
 
 cp -r $KEYSTORE  $DATADIR;
+
+run_script "/app/genesis-sepolia.sh"

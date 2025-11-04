@@ -2,8 +2,8 @@
 pragma solidity ^0.8.0;
 
 contract ERC20Token {
-    string public name = "Test Token";
-    string public symbol = "TEST";
+    string public name;
+    string public symbol;
     uint8 public decimals = 18;
     uint256 public totalSupply;
     
@@ -13,8 +13,10 @@ contract ERC20Token {
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
     
-    constructor(uint256 _initialSupply) {
-        totalSupply = _initialSupply * 10 ** decimals;
+    constructor(string memory name_, string memory symbol_, uint256 initialSupply) {
+        name = name_;
+        symbol = symbol_;
+        totalSupply = initialSupply * 10 ** decimals;
         balanceOf[msg.sender] = totalSupply;
     }
     

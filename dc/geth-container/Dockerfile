@@ -11,7 +11,7 @@ ENV GETH_JWT_HEX="0000000000000000000000000000000000000000000000000000000"
 ENV SOLC_VERSION=v0.8.19
 
 # Instalar utilidades
-RUN apk add --no-cache bash jq wget curl python3 py3-pip 
+RUN apk add --no-cache bash jq wget curl python3 py3-pip  openssl
 
 #solidity
 
