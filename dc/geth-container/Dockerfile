@@ -1,4 +1,4 @@
-FROM  ethereum/client-go:v1.13.15
+FROM  ethereum/client-go:v1.15.0
 
 WORKDIR /app
 
@@ -39,7 +39,4 @@ COPY ./scripts/* /app/
 # Permisos
 RUN chmod +x -R /app
 
-EXPOSE 8545 8546 30303
-
-
-
+EXPOSE 8545 8546 30303 30303/udp 8551

@@ -39,63 +39,60 @@ services:
 
   # =============== CORE BLOCKCHAIN ===============
   geth-daemon:
-    build: ./dc/geth-container
+    image: ethereum/client-go:v1.13.0
     container_name: geth-daemon
-    # depends_on:
-    #   geth-init:
-    #     condition: service_completed_successfully
     environment:
-      - NETWORK=sepolia
-      - DATADIR=/geth-data/geth
       - JWT_SECRET=/jwt-secret/jwt.hex
-      - GENESIS=/geth-data/genesis.json
     ports:
-      - "8545:8545"   # HTTP JSON-RPC
-      - "8546:8546"   # WebSocket
-      - "30303:30303" # P2P
+      - "8545:8545"
+      - "8546:8546"
+      - "30303:30303"
       - "30303:30303/udp"
-      - "8551:8551"   # AuthRPC para Lighthouse
+      - "8551:8551"
     volumes:
       - jwt-secret:/jwt-secret:z
       - geth-data:/geth-data:z
       - ./volumen/output:/output:z
+      - ./dc/geth-container/scripts:/app:z
     networks:
       - eth-net
-    restart: on-failure
-    entrypoint: ["/bin/bash", "/app/geth-sepolia.sh"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/app/geth-sepolia.sh"]
     healthcheck:
-      test: ["CMD", "/app/healthcheck-sepolia.sh"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
+      test: ["CMD-SHELL",  "/bin/sh", "/app/geth-sepolia.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s  # Dar más tiempo para iniciar
 
   prysm-beacon:
-    image: prysmaticlabs/prysm-beacon-chain:v5.0.4
+    image: prysmaticlabs/prysm-beacon-chain:latest
     container_name: prysm-beacon
     depends_on:
       geth-daemon:
         condition: service_healthy
-    command: >
-        --sepolia
-        --datadir=/prysm-beacon-data
-        --execution-endpoint=http://geth-daemon:8551
-        --jwt-secret=/jwt-secret/jwt.hex
-        --checkpoint-sync-url=https://checkpoint-sync.sepolia.ethpandaops.io
-        --verbosity=debug
-        --accept-terms-of-use
-        --force-clear-db
+    command: |
+      --sepolia
+      --datadir=/prysm-beacon-data
+      --execution-endpoint=http://geth-daemon:8551
+      --jwt-secret=/jwt-secret/jwt.hex
+      --rpc-host=0.0.0.0
+      --grpc-gateway-host=0.0.0.0
+      --monitoring-host=0.0.0.0
+      --checkpoint-sync-url=https://checkpoint-sync.sepolia.ethpandaops.io
+      --suggested-fee-recipient=0x5EF85e87e05Dbc7F32d20ec1991b24Fb112f1151
+      --accept-terms-of-use
+      --verbosity=info
     ports:
-      - "4000:4000"
       - "3500:3500"
+      - "4000:4000"
+      - "8080:8080"
       - "12000:12000/udp"
-      - "13000:13000"
     volumes:
       - prysm-beacon-data:/prysm-beacon-data:z
       - jwt-secret:/jwt-secret:z
     networks:
       - eth-net
-
   # =============== blockscout ===============
 
   # PostgreSQL separado pero simple
