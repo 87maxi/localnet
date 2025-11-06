@@ -1,45 +1,7 @@
-
-
 services:
-  # =============== INICIALIZADOR (se ejecuta una vez) ===============
-  # geth-init:
-  #   build: ./dc/geth-container
-  #   user: "0:0"
-  #   environment:
-  #      - GETH_JWT_HEX=${GETH_JWT_HEX}
-  #      - GETH_PASSWORD=${GETH_PASSWORD}
-  #      - NUM_ACCOUNT=${NUM_ACCOUNT}
-  #   volumes:
-  #     - geth-data:/geth-data:z
-  #     - jwt-secret:/jwt-secret:z
-  #     - ./volumen/output:/output:z
-  #   networks:
-  #     - eth-net
-  #   restart: "no"
-  #   entrypoint: ["/bin/bash", "/app/geth-init.sh"]  
-
-  # keytool:
-  #   build: ./dc/keytool
-  #   container_name: keytool
-  #   environment:
-  #     - GETH_WALLET_PASSWORD=${GETH_WALLET_PASSWORD}
-  #   depends_on:
-  #     geth-init:
-  #       condition: service_completed_successfully
-  #   volumes:
-  #     - geth-data:/geth-data:z
-  #     - ./volumen/output:/app/output:z
-  #     - ./dc/keytool/config.yaml:/app/config.yaml
-  #   command: ["/execute_convert.sh"]
-  #   restart: "no"
-  #   healthcheck:
-  #     test: ["CMD", "test", "-f", "/geth-data/keytool/genesis.ssz"]
-  #     interval: 5s
-  #     retries: 5
-
   # =============== CORE BLOCKCHAIN ===============
   geth-daemon:
-    image: ethereum/client-go:v1.13.0
+    image: ethereum/client-go:latest
     container_name: geth-daemon
     environment:
       - JWT_SECRET=/jwt-secret/jwt.hex
@@ -59,163 +21,234 @@ services:
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/app/geth-sepolia.sh"]
     healthcheck:
-      test: ["CMD-SHELL",  "/bin/sh", "/app/geth-sepolia.sh"]
+      test: ["CMD", "geth", "attach", "--exec", "eth.blockNumber", "http://localhost:8545"]
       interval: 15s
       timeout: 10s
-      retries: 30
-      start_period: 60s  # Dar más tiempo para iniciar
+      retries: 10
+      start_period: 60s
 
-  prysm-beacon:
-    image: prysmaticlabs/prysm-beacon-chain:latest
-    container_name: prysm-beacon
+  # =============== LIGHTHOUSE BEACON (REEMPLAZA NIMBUS) ===============
+  lighthouse-beacon:
+    image: sigp/lighthouse:latest
+    container_name: lighthouse-beacon
     depends_on:
       geth-daemon:
         condition: service_healthy
     command: |
-      --sepolia
-      --datadir=/prysm-beacon-data
+      lighthouse
+      beacon_node
+      --network=sepolia
+      --datadir=/lighthouse-data
       --execution-endpoint=http://geth-daemon:8551
-      --jwt-secret=/jwt-secret/jwt.hex
-      --rpc-host=0.0.0.0
-      --grpc-gateway-host=0.0.0.0
-      --monitoring-host=0.0.0.0
-      --checkpoint-sync-url=https://checkpoint-sync.sepolia.ethpandaops.io
+      --execution-jwt=/jwt-secret/jwt.hex
+      --http
+      --http-address=0.0.0.0
+      --http-port=3500
+      --http-allow-origin=*
+      --metrics
+      --metrics-address=0.0.0.0
+      --metrics-port=8100
       --suggested-fee-recipient=0x5EF85e87e05Dbc7F32d20ec1991b24Fb112f1151
-      --accept-terms-of-use
-      --verbosity=info
+      --checkpoint-sync-url=https://sepolia.checkpoint.sigp.io
+      --target-peers=50
+      --listen-address=0.0.0.0
+      --port=9000
+      --discovery-port=9000
+      --disable-upnp
     ports:
       - "3500:3500"
-      - "4000:4000"
-      - "8080:8080"
-      - "12000:12000/udp"
+      - "8100:8100"
+      - "9000:9000/tcp"
+      - "9000:9000/udp"
     volumes:
-      - prysm-beacon-data:/prysm-beacon-data:z
+      - lighthouse-data:/lighthouse-data
       - jwt-secret:/jwt-secret:z
     networks:
       - eth-net
-  # =============== blockscout ===============
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10 sh -c '</dev/tcp/127.0.0.1/3500'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+  
+  # =============== IPFS ===============  # ← AGREGAR ESTE SERVICIO QUE FALTABA
+  ipfs-node:
+    image: ipfs/kubo:latest
+    container_name: ipfs-node
+    ports:
+      - "5001:5001"   # API
+      - "8081:8080"   # Gateway
+      - "4001:4001"   # Swarm
+    volumes:
+      - ipfs-data:/data/ipfs
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+  # =============== POSTGRES GRAPH ===============
+  postgres-graph:
+    image: postgres:15-alpine
+    container_name: postgres-graph
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: let-me-in
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-graph-data:/var/lib/postgresql/data
+      - ./dc/graph-db/scripts/init-database.sql:/docker-entrypoint-initdb.d/init-database.sql
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graph-node"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
 
-  # PostgreSQL separado pero simple
-  # blockscout-db:
-  #   image: postgres:15-alpine
-  #   container_name: blockscout-db
-  #   environment:
-  #     POSTGRES_USER: postgres
-  #     POSTGRES_PASSWORD: postgres
-  #     POSTGRES_DB: blockscout
-  #   command: >
-  #     postgres
-  #     -c max_connections=200
-  #     -c shared_buffers=256MB
-  #     -c effective_cache_size=1GB
-  #     -c maintenance_work_mem=64MB
-  #     -c checkpoint_completion_target=0.7
-  #     -c wal_buffers=16MB
-  #     -c default_statistics_target=100
-  #   depends_on:
-  #       prysm-beacon:
-  #         condition: service_healthy
-  #   volumes:
-  #     - blockscout-data:/var/lib/postgresql/data
-  #   ports:
-  #     - 5432:5432
-  #   networks:
-  #     - eth-net
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 10
-  #   restart: on-failure
+  # =============== GRAPH NODE ===============
+  graph-node:
+    image: graphprotocol/graph-node:latest
+    container_name: graph-node
+    depends_on:
+      postgres-graph:
+        condition: service_healthy
+      ipfs-node:
+        condition: service_healthy
+      geth-daemon:
+        condition: service_healthy
+    environment:
+      - postgres_host=postgres-graph
+      - postgres_user=graph-node
+      - postgres_pass=let-me-in
+      - postgres_db=graph-node
+      - ipfs=http://ipfs-node:5001
+      - ethereum=sepolia:http://geth-daemon:8545
+      - ETHEREUM_REORG_THRESHOLD=50
+      - RUST_LOG=info
+      - GRAPH_LOG=info
+      - GRAPH_IGNORE_COLLATION_CHECK=true
+    ports:
+      - "8000:8000"   # GraphQL HTTP
+      - "8020:8020"   # JSON-RPC
+      - "8030:8030"   # Subscriptions (WebSocket)
+      - "8040:8040"   # Metrics
+    volumes:
+      - ./volumen/subgraphs:/subgraphs
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/metrics"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    restart: unless-stopped
 
+  # =============== POSTGRES PRINCIPAL ===============
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: blockscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
 
+  # =============== BLOCKSCOUT MIGRATIONS ===============
+  blockscout-migrations:
+    image: blockscout/blockscout:latest
+    container_name: blockscout-migrations
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres-db:5432/blockscout
+      ECTO_USE_SSL: "false"
+      MIX_ENV: prod
+      ETHEREUM_JSONRPC_HTTP_URL: "http://geth-daemon:8545"
+      ETHEREUM_JSONRPC_WS_URL: "ws://geth-daemon:8546"
+    command: >
+      sh -c "
+        echo '🕐 Esperando base de datos...' &&
+        until nc -z postgres-db 5432; do
+          sleep 5
+        done &&
+        echo '🚀 Ejecutando migraciones de Blockscout...' &&
+        bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' &&
+        echo '✅ Migraciones completadas!' &&
+        echo '🎉 Base de datos lista para Blockscout!'
+      "
+    networks:
+      - eth-net
+    restart: "no"
 
-  # Servicio DEDICADO para migraciones
-  # blockscout-migrations:
-  #   image: blockscout/blockscout:latest
-  #   container_name: blockscout-migrations
-  #   depends_on:
-  #     blockscout-db:
-  #       condition: service_healthy
-  #   environment:
-  #     DATABASE_URL: postgresql://postgres:postgres@blockscout-db:5432/blockscout
-  #     ECTO_USE_SSL: "false"
-  #     MIX_ENV: prod
-  #   command: >
-  #     sh -c "
-  #       echo '🕐 Waiting for database...' &&
-  #       sleep 10 &&
-  #       echo '🚀 Running Blockscout database migrations...' &&
-  #       bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' &&
-  #       echo '✅ Migrations completed successfully!' &&
-  #       echo '🎉 Database is ready for Blockscout!'
-  #     "
-  #   networks:
-  #     - eth-net
-  #   restart: "no"  # Se ejecuta una vez y termina
-
-
-
-  # blockscout-simple:
-  #   image: blockscout/blockscout:latest
-  #   container_name: blockscout-simple
-  #   depends_on:
-  #     blockscout-migrations:
-  #       condition: service_completed_successfully
-  #     geth-daemon:
-  #       condition: service_healthy
-  #   ports:
-  #     - "4040:4000"
-  #   environment:
-  #       DATABASE_URL: postgresql://postgres:postgres@blockscout-db:5432/blockscout
-  #       ECTO_USE_SSL: "false"
-  #       POOL_SIZE: "20"
-        
-  #       # ✅ CONFIGURACIÓN SEPOLIA
-  #       ETHEREUM_JSONRPC_HTTP_URL: "http://geth-daemon:8545"
-  #       ETHEREUM_JSONRPC_WS_URL: "ws://geth-daemon:8546"
-  #       ETHEREUM_JSONRPC_VARIANT: "geth"
-  #       ETHEREUM_JSONRPC_TRANSPORT: "http"
-        
-  #       # ✅ CONFIGURACIÓN DE RED SEPOLIA
-  #       NETWORK: "Sepolia Testnet"
-  #       SUBNETWORK: "Ethereum Testnet"
-  #       CHAIN_ID: "11155111"
-  #       COIN: "ETH"
-  #       SHOW_PRICE: "true"
-  #       DISABLE_EXCHANGE_RATES: "false"
-        
-  #       # Otros configs se mantienen igual...
-  #   command: ["bin/blockscout", "start"]
-  #   networks:
-  #     - eth-net
-  #   restart: unless-stopped
-
-  #blockscout-frontend:
-  #  build:
-  #    context: ./dc/blockscout-frontend
-  #  container_name: blockscout-frontend
-  #  depends_on:
-  #    - blockscout-simple
-  #  ports:
-  #    - "3000:3000"
-  #  networks:
-  #    - eth-net
-  #  volumes:
-  #    - blockscout-frontend:/app
-  #  restart: unless-stopped
+  # =============== BLOCKSCOUT ===============
+  blockscout:
+    image: blockscout/blockscout:latest
+    container_name: blockscout
+    depends_on:
+      blockscout-migrations:
+        condition: service_completed_successfully
+    ports:
+      - "4000:4000"
+    environment:
+      # === VARIABLES CRÍTICAS - SIN ESTAS SE CIERRA ===
+      ETHEREUM_JSONRPC_HTTP_URL: "http://geth-daemon:8545"
+      ETHEREUM_JSONRPC_WS_URL: "ws://geth-daemon:8546"
+      ETHEREUM_JSONRPC_VARIANT: "geth"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres-db:5432/blockscout"
+      NETWORK: "Sepolia"
+      CHAIN_ID: "11155111"
+      COIN: "ETH"
+      
+      # === VARIABLES OPCIONALES ===
+      SHOW_PRICE: "false"
+      LOG_LEVEL: "info"
+      MIX_ENV: "prod"
+      POOL_SIZE: "10"
+      ECTO_USE_SSL: "false"
+    networks:
+      - eth-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000 || exit 0"]
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
 
 volumes:
   jwt-secret:
-  prysm-genesis:
-  prysm-keys:
   geth-data:
-  prysm-beacon-data:
-  prysm-validator:
-  blockscout-data:
-  blockscout-frontend:
+  lighthouse-data:  # Cambiado de nimbus-data
+  ipfs-data:
+  postgres-data:
+  postgres-graph-data:
 
 networks:
   eth-net:
-    name: eth-net
     driver: bridge
